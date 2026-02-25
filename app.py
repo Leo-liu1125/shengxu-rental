@@ -78,12 +78,15 @@ if 'predict_months' not in st.session_state:
     st.session_state.predict_months = 12
 if 'monthly_received' not in st.session_state:
     st.session_state.monthly_received = {}
+if 'future_predictions' not in st.session_state:
+    # 未来出租预测：{房间号: {月份: {状态, 房租, 物业费}}}
+    st.session_state.future_predictions = {}
 
 # 侧边栏
 with st.sidebar:
     st.title("🏢 盛续物业管理系统")
     st.markdown("---")
-    page = st.radio("选择功能模块", ["📋 销控表与应收款", "💰 现金流预测"], index=0)
+    page = st.radio("选择功能模块", ["📋 销控表与应收款", "✏️ 手动修改数据", "🔮 未来出租预测", "💰 现金流预测"], index=0)
     st.markdown("---")
     st.header("📊 数据管理")
     uploaded_file = st.file_uploader("导入 Excel 数据", type=['xlsx', 'xls'])
@@ -152,11 +155,18 @@ def get_receivable_received(room_id, month_str, room, month):
     current_date = st.session_state.get('current_date', datetime.now())
     is_future = month > current_date
     
+    # 检查是否有未来出租预测
+    if is_future and room_id in st.session_state.future_predictions:
+        if month_str in st.session_state.future_predictions[room_id]:
+            pred = st.session_state.future_predictions[room_id][month_str]
+            receivable = pred.get('房租', 0) + pred.get('物业费', 0)
+            status = '预测出租'
+    
     if is_future:
         # 未来月份：已收 = 0（还没收到）
         received = 0
     else:
-        # 历史月份：已收 = Excel数据/人工填写（没有则为0）
+        # 历史月份：已收 = 手动填写的数据
         if room_id in st.session_state.monthly_received:
             received = st.session_state.monthly_received[room_id].get(month_str, 0)
         else:
@@ -462,6 +472,188 @@ else:
         col_m2.metric("已收合计", f"¥{total_received:,.0f}")
         col_m3.metric("未收合计", f"¥{total_unreceived:,.0f}")
         col_m4.metric("预测期末余额", f"¥{final_balance:,.0f}")
+
+# ==================== 页面3: 手动修改数据 ====================
+elif page == "✏️ 手动修改数据":
+    st.title("✏️ 手动修改数据")
+    st.markdown("手动填写历史月份的已收金额")
+    
+    current_date = st.session_state.get('current_date', datetime.now())
+    
+    # 选择房间
+    rooms_df = st.session_state.rooms_df
+    room_list = rooms_df['房间号'].tolist()
+    selected_room = st.selectbox("选择房间", room_list)
+    
+    if selected_room:
+        room_info = rooms_df[rooms_df['房间号'] == selected_room].iloc[0]
+        st.markdown(f"**客户名称**: {room_info.get('客户名称', '')}")
+        st.markdown(f"**状态**: {room_info.get('状态', '')}")
+        st.markdown(f"**房租**: ¥{room_info.get('房租', 0):,.0f}")
+        st.markdown(f"**物业费**: ¥{room_info.get('物业费', 0):,.0f}")
+        
+        st.markdown("---")
+        st.subheader("📝 修改已收金额")
+        
+        # 选择月份（只显示历史月份）
+        start_date = datetime(2025, 1, 1)
+        historical_months = []
+        for i in range(24):
+            month = start_date + relativedelta(months=i)
+            if month <= current_date:
+                historical_months.append(month.strftime("%Y-%m"))
+        
+        selected_month = st.selectbox("选择月份", historical_months)
+        
+        if selected_month:
+            # 获取当前已收金额
+            current_received = 0
+            if selected_room in st.session_state.monthly_received:
+                current_received = st.session_state.monthly_received[selected_room].get(selected_month, 0)
+            
+            # 显示应收金额
+            month = datetime.strptime(selected_month, "%Y-%m")
+            receivable, _ = get_contract_amount(room_info, month)
+            
+            col_edit1, col_edit2 = st.columns(2)
+            with col_edit1:
+                st.metric("应收金额", f"¥{receivable:,.0f}")
+            with col_edit2:
+                new_received = st.number_input(
+                    "已收金额", 
+                    min_value=0, 
+                    max_value=receivable * 2,
+                    value=int(current_received),
+                    step=1000,
+                    key=f"edit_{selected_room}_{selected_month}"
+                )
+            
+            if st.button("保存修改", type="primary"):
+                if selected_room not in st.session_state.monthly_received:
+                    st.session_state.monthly_received[selected_room] = {}
+                st.session_state.monthly_received[selected_room][selected_month] = new_received
+                st.success(f"已保存！{selected_room} {selected_month} 已收金额 = ¥{new_received:,.0f}")
+    
+    # 显示已修改的数据
+    st.markdown("---")
+    st.subheader("📊 已修改的数据")
+    
+    if st.session_state.monthly_received:
+        modified_data = []
+        for room_id, months_data in st.session_state.monthly_received.items():
+            for month_str, received in months_data.items():
+                if received > 0:
+                    modified_data.append({
+                        "房间号": room_id,
+                        "月份": month_str,
+                        "已收金额": received
+                    })
+        
+        if modified_data:
+            st.dataframe(pd.DataFrame(modified_data), use_container_width=True, hide_index=True)
+        else:
+            st.info("暂无修改记录")
+    else:
+        st.info("暂无修改记录")
+
+# ==================== 页面4: 未来出租预测 ====================
+elif page == "🔮 未来出租预测":
+    st.title("🔮 未来出租预测")
+    st.markdown("预测未来月份的出租房源和租金")
+    
+    current_date = st.session_state.get('current_date', datetime.now())
+    rooms_df = st.session_state.rooms_df
+    
+    # 显示空置房源
+    st.subheader("🏠 当前空置房源")
+    vacant_rooms = rooms_df[rooms_df['状态'] == '空置']
+    if len(vacant_rooms) > 0:
+        st.dataframe(vacant_rooms[['房间号', '客户名称', '面积', '状态']], use_container_width=True, hide_index=True)
+    else:
+        st.info("暂无空置房源")
+    
+    st.markdown("---")
+    st.subheader("🔮 添加出租预测")
+    
+    # 选择空置房间
+    vacant_room_list = vacant_rooms['房间号'].tolist()
+    if vacant_room_list:
+        selected_vacant = st.selectbox("选择房间", vacant_room_list, key="predict_room")
+        
+        if selected_vacant:
+            room_info = rooms_df[rooms_df['房间号'] == selected_vacant].iloc[0]
+            st.markdown(f"**面积**: {room_info.get('面积', 0)} ㎡")
+            
+            col_pred1, col_pred2, col_pred3 = st.columns(3)
+            
+            with col_pred1:
+                predict_month = st.date_input(
+                    "预计起租日期",
+                    value=current_date + relativedelta(months=1),
+                    key="predict_date"
+                )
+            
+            with col_pred2:
+                predict_rent = st.number_input(
+                    "预测月租金",
+                    min_value=0,
+                    value=int(room_info.get('房租', 0) or 10000),
+                    step=500,
+                    key="predict_rent"
+                )
+            
+            with col_pred3:
+                predict_fee = st.number_input(
+                    "预测月物业费",
+                    min_value=0,
+                    value=int(room_info.get('物业费', 0) or 2000),
+                    step=100,
+                    key="predict_fee"
+                )
+            
+            predict_tenant = st.text_input("预测租户名称（可选）", key="predict_tenant")
+            
+            if st.button("添加预测", type="primary"):
+                if selected_vacant not in st.session_state.future_predictions:
+                    st.session_state.future_predictions[selected_vacant] = {}
+                
+                month_str = predict_month.strftime("%Y-%m")
+                st.session_state.future_predictions[selected_vacant][month_str] = {
+                    "状态": "预测出租",
+                    "房租": predict_rent,
+                    "物业费": predict_fee,
+                    "租户": predict_tenant
+                }
+                st.success(f"已添加预测！{selected_vacant} 预计 {month_str} 出租")
+    
+    # 显示已添加的预测
+    st.markdown("---")
+    st.subheader("📊 出租预测列表")
+    
+    if st.session_state.future_predictions:
+        predict_data = []
+        for room_id, predictions in st.session_state.future_predictions.items():
+            for month_str, pred in predictions.items():
+                predict_data.append({
+                    "房间号": room_id,
+                    "预计起租": month_str,
+                    "预测租户": pred.get('租户', ''),
+                    "预测房租": f"¥{pred.get('房租', 0):,.0f}",
+                    "预测物业费": f"¥{pred.get('物业费', 0):,.0f}"
+                })
+        
+        if predict_data:
+            st.dataframe(pd.DataFrame(predict_data), use_container_width=True, hide_index=True)
+            
+            # 清除预测按钮
+            if st.button("清除所有预测"):
+                st.session_state.future_predictions = {}
+                st.success("已清除所有预测")
+                st.rerun()
+        else:
+            st.info("暂无预测记录")
+    else:
+        st.info("暂无预测记录")
 
 st.markdown("---")
 st.markdown("<center>盛续物业租赁管理系统 © 2026 | 共51个房间 | 时间范围：2025年1月起</center>", unsafe_allow_html=True)
