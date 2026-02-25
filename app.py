@@ -276,9 +276,31 @@ if page == "📋 销控表与应收款":
         hide_index=True
     )
     
-    # 详细数据导出
+    # 详细明细数据 - 直接显示
     st.markdown("---")
-    st.markdown("#### 完整明细数据")
+    st.markdown("#### 房间明细数据（完整）")
+    
+    # 构建显示用的明细表
+    display_cols = ["房间号", "客户名称"]
+    for month_str in month_columns:
+        display_cols.extend([f"{month_str}_应收", f"{month_str}_已收"])
+    display_cols.extend(["应收合计", "已收合计", "未收合计"])
+    
+    # 格式化显示
+    format_dict = {"应收合计": "¥{:,.0f}", "已收合计": "¥{:,.0f}", "未收合计": "¥{:,.0f}"}
+    for month_str in month_columns:
+        format_dict[f"{month_str}_应收"] = "¥{:,.0f}"
+        format_dict[f"{month_str}_已收"] = "¥{:,.0f}"
+    
+    st.dataframe(
+        detail_df.style.format(format_dict),
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    # 导出按钮
+    st.markdown("---")
+    st.markdown("#### 导出Excel")
     
     if st.button("📥 导出完整应收款明细Excel"):
         output = io.BytesIO()
