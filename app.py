@@ -278,25 +278,26 @@ if page == "📋 销控表与应收款":
     
     # 详细明细数据 - 直接显示
     st.markdown("---")
-    st.markdown("#### 房间明细数据（完整）")
+    st.markdown("#### 房间明细数据")
     
-    # 构建显示用的明细表
-    display_cols = ["房间号", "客户名称"]
-    for month_str in month_columns:
-        display_cols.extend([f"{month_str}_应收", f"{month_str}_已收"])
-    display_cols.extend(["应收合计", "已收合计", "未收合计"])
-    
-    # 格式化显示
-    format_dict = {"应收合计": "¥{:,.0f}", "已收合计": "¥{:,.0f}", "未收合计": "¥{:,.0f}"}
-    for month_str in month_columns:
-        format_dict[f"{month_str}_应收"] = "¥{:,.0f}"
-        format_dict[f"{month_str}_已收"] = "¥{:,.0f}"
-    
+    # 只显示汇总列，避免列太多
+    summary_cols = ["房间号", "客户名称", "应收合计", "已收合计", "未收合计"]
     st.dataframe(
-        detail_df.style.format(format_dict),
+        detail_df[summary_cols].style.format({"应收合计": "¥{:,.0f}", "已收合计": "¥{:,.0f}", "未收合计": "¥{:,.0f}"}),
         use_container_width=True,
         hide_index=True
     )
+    
+    # 可展开查看完整月度明细
+    with st.expander("📊 查看完整月度明细（按月份）"):
+        # 选择月份查看
+        selected_month = st.selectbox("选择月份", month_columns, key="detail_month")
+        month_detail_cols = ["房间号", "客户名称", f"{selected_month}_应收", f"{selected_month}_已收"]
+        st.dataframe(
+            detail_df[month_detail_cols].style.format({f"{selected_month}_应收": "¥{:,.0f}", f"{selected_month}_已收": "¥{:,.0f}"}),
+            use_container_width=True,
+            hide_index=True
+        )
     
     # 导出按钮
     st.markdown("---")
